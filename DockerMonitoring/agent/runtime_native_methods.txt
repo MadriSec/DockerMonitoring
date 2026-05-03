@@ -1,0 +1,3 @@
+sample.FakeNative.doNothing	1
+sample.FakeNative.echo	1
+sample.FakeNative.upper	1

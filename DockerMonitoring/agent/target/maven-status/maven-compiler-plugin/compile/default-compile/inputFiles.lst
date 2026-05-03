@@ -1,0 +1,8 @@
+/src/src/main/java/org/dockermonitoring/agent/NativeWrapperClassVisitor.java
+/src/src/main/java/org/dockermonitoring/agent/NativeLibraryMonitor.java
+/src/src/main/java/org/dockermonitoring/agent/OpenTelemetryBridge.java
+/src/src/main/java/org/dockermonitoring/agent/NativeWrapperTransformer.java
+/src/src/main/java/org/dockermonitoring/agent/NativeWrapperAgent.java
+/src/src/main/java/org/dockermonitoring/agent/ConfigLoader.java
+/src/src/main/java/org/dockermonitoring/bootstrap/NativeMethodTracker.java
+/src/src/main/java/org/dockermonitoring/agent/PrometheusExporter.java

@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 2s
+  evaluation_interval: 2s
+
+scrape_configs:
+  - job_name: echotrace-native
+    static_configs:
+      - targets:
+          - instrumented-twin:9464
+    metrics_path: /metrics
+
+  - job_name: echotrace-seccomp
+    static_configs:
+      - targets:
+          - seccomp-exporter:9101
+    metrics_path: /metrics

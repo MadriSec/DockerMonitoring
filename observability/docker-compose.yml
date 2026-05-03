@@ -1,0 +1,44 @@
+# Prometheus + Grafana only — run from repo root via ./start_dashboard.sh
+# Scrapes the Java agent on the host at host.docker.internal:9464 (otel_capture.sh).
+
+services:
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=12h
+      - --web.enable-lifecycle
+    volumes:
+      - ./prometheus/prometheus.host.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/file_sd:/etc/prometheus/file_sd:rw
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9095}:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [observability]
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GF_SERVER_ROOT_URL:-http://localhost:3030}
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3030}:3000"
+    depends_on:
+      - prometheus
+    networks: [observability]
+
+volumes:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  observability:
+    name: observability

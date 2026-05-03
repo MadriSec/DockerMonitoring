@@ -1,0 +1,12 @@
+org/dockermonitoring/agent/NativeWrapperAgent.class
+org/dockermonitoring/agent/NativeWrapperClassVisitor.class
+org/dockermonitoring/agent/PrometheusExporter$IndexHandler.class
+org/dockermonitoring/bootstrap/NativeMethodTracker$1.class
+org/dockermonitoring/agent/PrometheusExporter.class
+org/dockermonitoring/agent/ConfigLoader.class
+org/dockermonitoring/agent/NativeWrapperClassVisitor$MethodInfo.class
+org/dockermonitoring/agent/NativeWrapperTransformer.class
+org/dockermonitoring/agent/NativeLibraryMonitor.class
+org/dockermonitoring/agent/PrometheusExporter$MetricsHandler.class
+org/dockermonitoring/agent/OpenTelemetryBridge.class
+org/dockermonitoring/bootstrap/NativeMethodTracker.class

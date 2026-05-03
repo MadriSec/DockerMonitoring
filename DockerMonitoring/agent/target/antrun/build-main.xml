@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="maven-antrun-" default="main">
+  <target name="main">
+    <mkdir dir="/src/target/classes/org/dockermonitoring/boot" />
+    <jar destfile="/src/target/classes/org/dockermonitoring/boot/tracker-boot.jar">
+      <fileset dir="/src/target/classes">
+        <include name="org/dockermonitoring/bootstrap/**" />
+      </fileset>
+    </jar>
+  </target>
+</project>

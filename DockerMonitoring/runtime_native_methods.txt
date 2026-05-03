@@ -1,0 +1,8 @@
+org.apache.tomcat.jni.Library.aprVersionString	1
+org.apache.tomcat.jni.Library.initialize	1
+org.apache.tomcat.jni.Library.version	8
+org.apache.tomcat.jni.Library.versionString	1
+org.apache.tomcat.jni.SSL.initialize	1
+org.apache.tomcat.jni.SSL.randSet	1
+org.apache.tomcat.jni.SSL.version	1
+org.apache.tomcat.jni.SSL.versionString	1

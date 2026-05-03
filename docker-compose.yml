@@ -1,0 +1,53 @@
+services:
+  instrumented-twin:
+    build:
+      context: .
+      dockerfile: DockerMonitoring/tomcat-twin/Dockerfile
+    ports:
+      - "8080:8080"
+      - "9464:9464"
+    networks: [echotrace]
+
+  seccomp-exporter:
+    build:
+      context: ./DockerMonitoring/seccomp-exporter
+    environment:
+      SECCOMP_EXPORTER_MODE: demo
+      SECCOMP_LISTEN: ":9101"
+    ports:
+      - "9101:9101"
+    networks: [echotrace]
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.retention.time=12h
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      - instrumented-twin
+      - seccomp-exporter
+    networks: [echotrace]
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3001
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3001:3000"
+    depends_on:
+      - prometheus
+    networks: [echotrace]
+
+networks:
+  echotrace:
+    name: echotrace

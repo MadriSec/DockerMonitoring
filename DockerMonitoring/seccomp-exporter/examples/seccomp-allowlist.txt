@@ -1,0 +1,15 @@
+# Example allowlist: names must match -syscall-field extraction (often evt.type).
+# Replace with your EchoTrace / seccomp-bpf generated profile.
+
+read
+write
+open
+openat
+close
+futex
+epoll_wait
+epoll_poll
+nanosleep
+clock_gettime
+getpid
+rt_sigreturn
