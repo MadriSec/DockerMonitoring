@@ -37,6 +37,7 @@ flowchart TB
 
 
 `[otel_capture.sh](../otel_capture.sh)` does not modify a running container in place: it **inspects** a target, then starts a **clone** with the agent JAR and config **bind-mounted** and JVM flags injected (e.g. `CATALINA_OPTS` for Tomcat). `[prometheus.host.yml](../observability/prometheus/prometheus.host.yml)` scrapes the resulting port via **file_sd** `[capture.json](../observability/prometheus/file_sd/)` (updated by the script when the port is non-default).
+<img width="1070" height="786" alt="Screenshot 2026-05-03 at 1 49 27 AM" src="https://github.com/user-attachments/assets/5438a7ea-ba62-4c33-8221-6cebc67edb09" />
 
 ### Syscall / seccomp-style path (outside JNI naming)
 
@@ -66,6 +67,8 @@ flowchart TB
 
 
 `[run_seccomp_exporter_demo.sh](../run_seccomp_exporter_demo.sh)` builds the image, publishes a host port (auto **9101–9120** if busy), and writes **file_sd** `[seccomp.json](../observability/prometheus/file_sd/)` for the same Prometheus instance.
+<img width="1508" height="1131" alt="Screenshot 2026-05-03 at 12 13 41 PM" src="https://github.com/user-attachments/assets/0511537e-b31d-444f-b4a0-e0d00667b3fa" />
+
 
 ### Observability plane (Stack A — host workloads + Docker dashboards)
 
