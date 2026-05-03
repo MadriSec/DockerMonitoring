@@ -7,7 +7,7 @@ This project complements [MadriSec/Prototype](https://github.com/MadriSec/Protot
 
 ## Architecture
 
-Echotrace splits observability into **two independent pipelines** that answer different questions. They share Prometheus and Grafana but do **not** share config files: JNI method lists and syscall allowlists live in different namespaces.
+DockerMonitoring splits observability into **two independent pipelines** that answer different questions. They share Prometheus and Grafana but do **not** share config files: JNI method lists and syscall allowlists live in different namespaces.
 
 
 | Pipeline             | Question it answers                                                   | Primary signals                                                        |
