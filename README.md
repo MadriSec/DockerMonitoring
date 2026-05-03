@@ -1,6 +1,9 @@
 # DockerMonitoring
 
 Java **JNI / native-method** visibility (`dockermonitoring_`*) plus **syscall / seccomp-style** metrics (`seccomp_`*) for Prometheus and Grafana.
+This project complements [MadriSec/Prototype](https://github.com/MadriSec/Prototype) (EchoTrace static analysis). DockerMonitoring measures what actually runs: which configured native methods fire, and which syscalls show up against an allowlist. Together they help narrow the gap between static overapproximation and runtime ground truth.
+
+
 
 ## Architecture
 
