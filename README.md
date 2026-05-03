@@ -1,113 +1,257 @@
 # DockerMonitoring
 
-Single project for **Java native-method runtime visibility** and **seccomp / syscall observability** (Prometheus + Grafana).
+Java **JNI / native-method** visibility (`dockermonitoring_`*) plus **syscall / seccomp-style** metrics (`seccomp_`*) for Prometheus and Grafana.
 
-## Components
+## Architecture
 
-| Path | Purpose |
-|------|--------|
-| [`agent/`](agent/) | `-javaagent` JAR: wraps configured JNI natives, counts calls, optional OTLP + Prometheus scrape, `/proc/self/maps` `.so` discovery (Linux). |
-| [`seccomp-exporter/`](seccomp-exporter/) | Go service: **sysdig** NDJSON on stdin → Prometheus `/metrics` (`seccomp_*` counters; allowlist + coverage). |
-| [`docs/`](docs/) | Runbooks: seccomp + sysdig pinning, allowlist format, composing with Prometheus. |
-| Observability stack | [../observability](../observability) — Prometheus (2s scrape) + Grafana dashboard UID `echotrace-native`. From repo root: `docker compose up --build`. |
+Echotrace splits observability into **two independent pipelines** that answer different questions. They share Prometheus and Grafana but do **not** share config files: JNI method lists and syscall allowlists live in different namespaces.
 
-## Observability + capture (repo root)
 
-From **`DockerMonitoring/`**: **`./start_dashboard.sh`** and **`./otel_capture.sh`** (wrappers → repo root).
+| Pipeline             | Question it answers                                                   | Primary signals                                                        |
+| -------------------- | --------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Java agent**       | Which **native (JNI) methods** run and how often?                     | `dockermonitoring_`* counters/gauges on HTTP `/metrics`, optional OTLP |
+| **Seccomp exporter** | Which **syscalls** appear, and are they **on** an expected allowlist? | `seccomp_`* counters/gauges on HTTP `/metrics`                         |
 
-From **repo root** (`Echotrace/`): **`./start_dashboard.sh`** and **`./otel_capture.sh`**.
 
-1. **`./start_dashboard.sh`** uses **Grafana :3030** and **Prometheus :9095** on the host by default (see `observability/docker-compose.yml`) so it does not fight with other stacks on **:3000** / **:9090**.
-2. **`otel_capture.sh`** — instrumented twin capture.
-3. **Syscall demo metrics** (Prometheus `seccomp_*`): from repo root `./run_seccomp_exporter_demo.sh`, or from here **`./run_seccomp_exporter_demo.sh`** (wrapper).
+Correlating them in production is **operational** (same time window, same workload, dashboards side by side), not a built-in line-by-line mapping from `ClassName.methodName` to syscall names.
 
-## Quick start — Java agent
+### JNI / native-method path (inside the JVM)
 
-From the **DockerMonitoring/agent** directory (Maven + JDK 11+):
+The agent loads as `-javaagent`, reads a method list (`-Ddockermonitoring.native.methods.file`), uses **ASM** bytecode transformation and `Instrumentation.setNativeMethodPrefix` to wrap matching natives, then exposes Prometheus text (and optionally exports OTLP metrics).
+
+```mermaid
+flowchart TB
+  subgraph jvm["JVM process"]
+    App["Application + JDK classes"]
+    CFG["Native methods file\nnatives.txt / .cfg"]
+    Agent["Java agent JAR\nASM + native prefix"]
+    App --> Agent
+    CFG --> Agent
+  end
+  HTTPj["HTTP :9464 /metrics\nPrometheus dockermonitoring names"]
+  OTLP["Optional OTLP/HTTP\nmetrics"]
+  Agent --> HTTPj
+  Agent --> OTLP
+```
+
+
+
+`[otel_capture.sh](../otel_capture.sh)` does not modify a running container in place: it **inspects** a target, then starts a **clone** with the agent JAR and config **bind-mounted** and JVM flags injected (e.g. `CATALINA_OPTS` for Tomcat). `[prometheus.host.yml](../observability/prometheus/prometheus.host.yml)` scrapes the resulting port via **file_sd** `[capture.json](../observability/prometheus/file_sd/)` (updated by the script when the port is non-default).
+
+### Syscall / seccomp-style path (outside JNI naming)
+
+`seccomp-exporter` consumes **newline**-delimited **JSON** with sysdig-shaped fields (default `**evt.type`** = syscall name, `**container.name`** for attribution). Each event is checked against `**allowlist.txt**`: allowlisted syscalls update coverage gauges; anything else increments **unexpected** syscall counters. Demo mode feeds a synthetic stream so dashboards work without **sysdig**; live mode expects `sysdig -j` (or equivalent) on **Linux** with appropriate privileges.
+
+```mermaid
+flowchart TB
+  subgraph ingest["Event sources"]
+    Live["sysdig -j\nLinux / privileged"]
+    Demo["Demo loop\nsynthetic NDJSON"]
+  end
+  Stdin["stdin\none JSON object per line"]
+  Live --> Stdin
+  Demo --> Stdin
+  subgraph exporter["seccomp-exporter"]
+    Parse["Parse evt.type\n+ container labels"]
+    List["allowlist file\nsyscall names"]
+    Logic["allowlist match +\ncoverage / unexpected"]
+    Parse --> Logic
+    List --> Logic
+  end
+  Stdin --> Parse
+  HTTPs["HTTP :9101 /metrics\nPrometheus seccomp names"]
+  Logic --> HTTPs
+```
+
+
+
+`[run_seccomp_exporter_demo.sh](../run_seccomp_exporter_demo.sh)` builds the image, publishes a host port (auto **9101–9120** if busy), and writes **file_sd** `[seccomp.json](../observability/prometheus/file_sd/)` for the same Prometheus instance.
+
+### Observability plane (Stack A — host workloads + Docker dashboards)
+
+Prometheus (in Docker) discovers targets from files under `observability/prometheus/file_sd/`. Grafana reads Prometheus as a datasource and loads provisioned dashboards (`echotrace-native`, `echotrace-seccomp`).
+
+```mermaid
+flowchart LR
+  subgraph host["Host"]
+    JVM["JVM + agent\nhost.docker.internal:N"]
+    SEC["seccomp-exporter container\nhost port 9101+"]
+  end
+  subgraph obs["Docker: observability compose"]
+    Prom["Prometheus :9095"]
+    Graf["Grafana :3030"]
+    SD["file_sd\ncapture.json\nseccomp.json"]
+    SD --> Prom
+    Prom --> Graf
+  end
+  JVM -->|"scrape /metrics"| Prom
+  SEC -->|"scrape /metrics"| Prom
+```
+
+
+
+### Full stack (Stack B — `docker compose` at repo root)
+
+All services attach to a single Docker network: Tomcat twin exposes **8080** and **9464**; seccomp-exporter **9101**; Prometheus **9090** scrapes both via static targets in `[observability/prometheus/prometheus.yml](../observability/prometheus/prometheus.yml)` (mounted into the Prometheus container by `[docker-compose.yml](../docker-compose.yml)`); Grafana **3001** → **3000** in-container.
+
+```mermaid
+flowchart TB
+  subgraph dc["docker compose network"]
+    Twin["instrumented-twin\nTomcat + agent"]
+    Sec["seccomp-exporter\ndemo or live"]
+    Prom["prometheus"]
+    Graf["grafana"]
+    Twin -->|"scrape :9464"| Prom
+    Sec -->|"scrape :9101"| Prom
+    Prom --> Graf
+  end
+  User["Browser\n8080 app\n3001 dashboards\n9090 Prom UI"]
+  User --> Twin
+  User --> Graf
+  User --> Prom
+```
+
+
+
+## Layout
+
+
+| Path                                     | Role                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `[agent/](agent/)`                       | `-javaagent` JAR; wraps listed native methods, Prometheus `/metrics`, optional OTLP.        |
+| `[seccomp-exporter/](seccomp-exporter/)` | Go: sysdig-style NDJSON → `/metrics` (`seccomp_*`; allowlist + coverage).                   |
+| `[tomcat-twin/](tomcat-twin/)`           | Sample Tomcat image + `[native-methods.cfg](tomcat-twin/native-methods.cfg)` for the agent. |
+| `[tomcat/](tomcat/)`                     | Example **per-workload** files: JNI list + syscall allowlist (see below).                   |
+| `[docs/](docs/)`                         | Seccomp / sysdig runbooks.                                                                  |
+| `[../observability/](../observability/)` | Prometheus + Grafana compose (used by `start_dashboard.sh`).                                |
+
+
+## Working directory (important)
+
+Many paths are written for the **repository root** (`Echotrace/`, parent of this folder).
+
+
+| You are in…             | Build seccomp image…                                                                                                    | Bind `tomcat/allowlist.txt`…                                                    |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| **Repo root**           | `docker build -t dm-seccomp-exporter -f DockerMonitoring/seccomp-exporter/Dockerfile DockerMonitoring/seccomp-exporter` | `-v "$PWD/DockerMonitoring/tomcat/allowlist.txt:/etc/seccomp/allowlist.txt:ro"` |
+| `**DockerMonitoring/`** | `docker build -t dm-seccomp-exporter -f seccomp-exporter/Dockerfile seccomp-exporter`                                   | `-v "$PWD/tomcat/allowlist.txt:/etc/seccomp/allowlist.txt:ro"`                  |
+
+
+If you mix the two (e.g. `DockerMonitoring/DockerMonitoring/...`), Docker builds fail or bind mounts break.
+
+Wrapper scripts in `**DockerMonitoring/`** (`start_dashboard.sh`, `otel_capture.sh`, `run_seccomp_exporter_demo.sh`) `exec` the copies under **repo root** so behavior is consistent.
+
+## `tomcat/` — two different lists
+
+
+| File                                           | Consumed by                                                                       | Format                                              | What it does                                                               |
+| ---------------------------------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------------- |
+| `[tomcat/natives.txt](tomcat/natives.txt)`     | Java **agent** (`-Ddockermonitoring.native.methods.file=…`)                       | `ClassName.methodName` per line                     | Methods to **instrument**; metrics count invocations.                      |
+| `[tomcat/allowlist.txt](tomcat/allowlist.txt)` | **seccomp-exporter** (`--allowlist-file` / mount at `/etc/seccomp/allowlist.txt`) | Linux **syscall** name per line (`read`, `open`, …) | Each event’s `evt.type` (or `-syscall-field`) is checked against this set. |
+
+
+They are **not** the same namespace: JNI method names are **not** compared to the syscall allowlist by any single tool. To relate them operationally, run **both** exporters while you exercise the app and use Grafana/Prometheus side by side.
+
+---
+
+## Stack A — Host metrics + dashboards (typical on macOS)
+
+Uses `**./start_dashboard.sh`** → `[observability/](../observability)`: **Grafana :3030**, **Prometheus :9095** (avoids clashing with :3000 / :9090). Prometheus reaches the JVM on the host via `host.docker.internal` and **file_sd** under `[observability/prometheus/file_sd/](../observability/prometheus/file_sd/)`.
+
+1. **Start dashboards** (from repo root **or** `DockerMonitoring/` via wrapper):
+  ```bash
+   ./start_dashboard.sh
+  ```
+2. **Instrument a running container** — inspects the container, then runs a **clone** with the agent JAR and native-methods file mounted (does not patch the original container in place):
+  ```bash
+   ./otel_capture.sh <container_name_or_id> DockerMonitoring/tomcat/natives.txt
+  ```
+   Sets an ephemeral scrape port if **9464** is busy and refreshes `file_sd/capture.json`. Output may include `runtime_native_methods.txt` in the repo root.
+3. **Seccomp metrics (demo stream)** — synthetic NDJSON so `seccomp_`* panels work without sysdig:
+  ```bash
+   ./run_seccomp_exporter_demo.sh
+  ```
+   Use **your** allowlist (path is resolved from **repo root** if relative):
+   Env vars: `SECCOMP_EXPORTER_HOST_PORT`, `SECCOMP_ALLOWLIST_FILE` (see script header in `[run_seccomp_exporter_demo.sh](../run_seccomp_exporter_demo.sh)`).
+
+For **real** syscalls, pipe sysdig NDJSON into the exporter (Linux / privileged); see `[docs/seccomp-sysdig.md](docs/seccomp-sysdig.md)` and `[seccomp-exporter/README.md](seccomp-exporter/README.md)`.
+
+---
+
+## Stack B — All-in-one `docker compose` (repo root)
+
+`[../docker-compose.yml](../docker-compose.yml)` runs Tomcat twin, seccomp-exporter **demo**, Prometheus **:9090**, Grafana **:3001** on one network.
+
+```bash
+cd /path/to/Echotrace
+docker compose up --build
+```
+
+- Tomcat: [http://localhost:8080](http://localhost:8080)  
+- JVM metrics: [http://localhost:9464/metrics](http://localhost:9464/metrics)  
+- Seccomp exporter: [http://localhost:9101/metrics](http://localhost:9101/metrics)  
+- Prometheus: [http://localhost:9090](http://localhost:9090)  
+- Grafana: [http://localhost:3001](http://localhost:3001) (default `admin` / `admin`)
+
+To use a **custom** allowlist with the compose `seccomp-exporter` service, add a volume that mounts your file over `/etc/seccomp/allowlist.txt` (see `[seccomp-exporter/docker-entrypoint.sh](seccomp-exporter/docker-entrypoint.sh)`).
+
+---
+
+## Java agent quick build
 
 ```bash
 cd DockerMonitoring/agent
-export JAVA_HOME=/path/to/jdk-11+
 mvn clean package -DskipTests
-./run-sample.sh
 ```
 
 Artifact: `DockerMonitoring/agent/target/docker-monitoring-agent.jar`
 
-### JVM flags
+### JVM properties (summary)
 
-| Property | Meaning |
-|----------|--------|
-| `-Ddockermonitoring.native.methods.file=/path/to/list.txt` | One line per `ClassName.methodName` to wrap. |
-| `-Ddockermonitoring.output.file=/path/to/runtime_native_methods.txt` | Periodic + shutdown dump (tab-separated counts). |
-| `-Ddockermonitoring.metrics.port=9464` | Optional Prometheus text on `http://0.0.0.0:9464/metrics`. |
-| `-Ddockermonitoring.metrics.host=0.0.0.0` | Bind address for the Prometheus text exporter (default `0.0.0.0`). |
-| `-Ddockermonitoring.maps.poll.seconds=30` | Linux: poll `/proc/self/maps` for `.so` paths (`0` = off). |
-| `-Ddockermonitoring.otlp.endpoint=http://collector:4318` | OTLP/HTTP **metrics** base URL (see OpenTelemetry below). |
-| `-Ddockermonitoring.otlp.export.interval.seconds=10` | OTLP export interval (seconds). |
-| `-Ddockermonitoring.service.name=myapp` | Resource `service.name` on OTLP metrics (optional). |
 
-Native method bytecode uses prefix `$$dm$$_` and `Instrumentation.setNativeMethodPrefix`.
+| Property                                                             | Meaning                              |
+| -------------------------------------------------------------------- | ------------------------------------ |
+| `-Ddockermonitoring.native.methods.file=/path/to/list.txt`           | One `ClassName.methodName` per line. |
+| `-Ddockermonitoring.output.file=/path/to/runtime_native_methods.txt` | Invocation dump.                     |
+| `-Ddockermonitoring.metrics.port=9464`                               | Prometheus text port.                |
+| `-Ddockermonitoring.otlp.endpoint=http://collector:4318`             | OTLP/HTTP metrics (optional).        |
+
+
+Additional properties: `-Ddockermonitoring.metrics.host=0.0.0.0`, `-Ddockermonitoring.maps.poll.seconds=30` (Linux `.so` discovery from `/proc/self/maps`), `-Ddockermonitoring.service.name=…`, `-Ddockermonitoring.otlp.export.interval.seconds=10`.
+
+Native methods use bytecode prefix `$$dm$$_` via `Instrumentation.setNativeMethodPrefix`.
 
 ### OpenTelemetry (OTLP/HTTP metrics)
 
-The agent starts `OpenTelemetryBridge` when **either** `-Ddockermonitoring.otlp.endpoint` **or** the standard env var `OTEL_EXPORTER_OTLP_ENDPOINT` is set (non-empty). Use the OTLP/HTTP base URL your collector expects (often `http://otel-collector:4318`). If the SDK fails to export with HTTP 404, try appending `/v1/metrics` to match your OpenTelemetry Java exporter version.
+The agent exports OTLP when **either** `-Ddockermonitoring.otlp.endpoint` **or** `OTEL_EXPORTER_OTLP_ENDPOINT` is set. Use the OTLP/HTTP base URL your collector expects (often `http://otel-collector:4318`). If you see HTTP 404, try appending `/v1/metrics` for your exporter version.
 
-| Input | Meaning |
-|--------|--------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Same as `-Ddockermonitoring.otlp.endpoint` if the system property is unset. |
-| `OTEL_SERVICE_NAME` | Same as `-Ddockermonitoring.service.name` if the property is unset. |
-| `-Ddockermonitoring.otlp.export.interval.seconds` | Export interval; default `10`. |
 
-**Instrument names** (OTLP gauges, dot-separated): `dockermonitoring.native_method.invocations` (attributes `class`, `method`), `dockermonitoring.native_methods.distinct`, `dockermonitoring.native_library.mapped` (attribute `path`). These complement the Prometheus text names `dockermonitoring_*` on `:9464`.
+| Input                         | Meaning                                                   |
+| ----------------------------- | --------------------------------------------------------- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Same role as the property above if the property is unset. |
+| `OTEL_SERVICE_NAME`           | Same as `-Ddockermonitoring.service.name` if unset.       |
 
-## Docker twin capture
 
-From **`DockerMonitoring/`** ([`otel_capture.sh`](otel_capture.sh)): copies the built agent JAR and a native-methods file **into an already-running container** and prints JVM flags (`-javaagent`, `-Ddockermonitoring.*`, optional OTLP env vars). Restart the JVM (or recreate the workload) with those flags and map **9464** for Prometheus.
+Instrument names (OTLP): e.g. `dockermonitoring.native_method.invocations` (attributes `class`, `method`), `dockermonitoring.native_methods.distinct`, `dockermonitoring.native_library.mapped` (`path`). Prometheus scrape names remain `dockermonitoring_`* on the metrics port.
 
-```bash
-cd DockerMonitoring
-./otel_capture.sh my_container /path/to/native_methods.cfg
-```
-
-The script runs `mvn package -DskipTests` in `agent/` automatically if `target/docker-monitoring-agent.jar` is missing.
-
-## Seccomp exporter (sysdig pipe)
-
-Build:
+### Sample harness
 
 ```bash
-cd DockerMonitoring/seccomp-exporter
-go build -o seccomp-exporter .
+cd DockerMonitoring/agent
+./run-sample.sh
 ```
 
-Run (example: pipe sysdig JSON lines — adjust filter to your install):
+---
 
-```bash
-sysdig -pc -j ... 2>/dev/null | ./seccomp-exporter --listen=:9101
-```
+## Grafana dashboards
 
-Scrape `http://localhost:9101/metrics`. See [`seccomp-exporter/README.md`](seccomp-exporter/README.md) for formats and `profile_coverage_ratio`.
+Bundled under `[../observability/grafana/dashboards/](../observability/grafana/dashboards/)`:
 
-## End-to-end stack (Tomcat twin + Prometheus + Grafana)
+- **Echotrace — Native methods** (`echotrace-native`) — `dockermonitoring_`*
+- **Echotrace — Seccomp / syscalls** (`echotrace-seccomp`) — `seccomp_`*
 
-From the **Echotrace repository root** (Docker daemon required):
-
-```bash
-docker compose up --build
-```
-
-- **Instrumented twin**: Tomcat on [http://localhost:8080](http://localhost:8080), metrics on [http://localhost:9464/metrics](http://localhost:9464/metrics).
-- **Prometheus**: [http://localhost:9090](http://localhost:9090) — target `instrumented-twin:9464`, scrape every 2s.
-- **Grafana**: [http://localhost:3001](http://localhost:3001) (admin / admin) — dashboards **Echotrace — Native methods** (`echotrace-native`) and **Echotrace — Seccomp / syscalls** (`echotrace-seccomp`). If **3001** is taken, change the host port in [`docker-compose.yml`](../docker-compose.yml).
-
-[`tomcat-twin/`](tomcat-twin/) — Dockerfile and [`native-methods.cfg`](tomcat-twin/native-methods.cfg) listing JDK natives to wrap (extend for your JNI surface).
-
-## Grafana / Prometheus notes
-
-- Metrics use names like `dockermonitoring_native_invocations_total`. The bundled dashboard [`../observability/grafana/dashboards/echotrace-native.json`](../observability/grafana/dashboards/echotrace-native.json) targets these series.
-- [`seccomp-exporter/`](seccomp-exporter/) emits `seccomp_*` metrics (`seccomp_unexpected_syscall_total`, `seccomp_profile_coverage_ratio`, etc.); add a Prometheus scrape job and panels/alerts as in [`seccomp-exporter/README.md`](seccomp-exporter/README.md).
+---
 
 ## License
 
-Internal / same as parent repository.
+Same as the parent repository.
