@@ -203,7 +203,69 @@ docker compose up --build
 To use a **custom** allowlist with the compose `seccomp-exporter` service, add a volume that mounts your file over `/etc/seccomp/allowlist.txt` (see `[seccomp-exporter/docker-entrypoint.sh](seccomp-exporter/docker-entrypoint.sh)`).
 
 ---
+Prometheus metrics (first-party names)
 
+These are the metric names defined in this repo (13 total). The JVM agent uses hand-written text exposition; seccomp-exporter also registers standard process_* and go_* collectors.
+
+Java agent — all use the dockermonitoring_ prefix:
+
+
+
+
+
+dockermonitoring_native_invocations_total
+
+
+
+dockermonitoring_unique_native_methods
+
+
+
+dockermonitoring_native_library_mapped
+
+
+
+dockermonitoring_exporter_up
+
+seccomp-exporter — syscall / allowlist surface:
+
+
+
+
+
+seccomp_exporter_lines_read_total
+
+
+
+seccomp_exporter_json_parse_errors_total
+
+
+
+seccomp_syscall_observed_total
+
+
+
+seccomp_syscall_blocked_total
+
+
+
+seccomp_unexpected_syscall_total
+
+
+
+seccomp_profile_allowlist_size
+
+
+
+seccomp_observed_distinct_syscalls
+
+
+
+seccomp_allowlisted_syscalls_observed
+
+
+
+seccomp_profile_coverage_ratio
 ## Java agent quick build
 
 ```bash
@@ -258,7 +320,3 @@ Bundled under `[../observability/grafana/dashboards/](../observability/grafana/d
 - **Echotrace — Seccomp / syscalls** (`echotrace-seccomp`) — `seccomp_`*
 
 ---
-
-## License
-
-Same as the parent repository.
