@@ -1,0 +1,127 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: instrumented-twin
+  namespace: dockermonitoring
+  labels:
+    app.kubernetes.io/name: instrumented-twin
+    app.kubernetes.io/part-of: dockermonitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: instrumented-twin
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: instrumented-twin
+        app.kubernetes.io/part-of: dockermonitoring
+    spec:
+      containers:
+        - name: instrumented-twin
+          image: dm-instrumented-twin:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: metrics
+              containerPort: 9464
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: instrumented-twin
+  namespace: dockermonitoring
+  labels:
+    app.kubernetes.io/name: instrumented-twin
+    app.kubernetes.io/part-of: dockermonitoring
+spec:
+  selector:
+    app.kubernetes.io/name: instrumented-twin
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+    - name: metrics
+      port: 9464
+      targetPort: metrics
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: seccomp-exporter
+  namespace: dockermonitoring
+  labels:
+    app.kubernetes.io/name: seccomp-exporter
+    app.kubernetes.io/part-of: dockermonitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: seccomp-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: seccomp-exporter
+        app.kubernetes.io/part-of: dockermonitoring
+    spec:
+      containers:
+        - name: seccomp-exporter
+          image: dm-seccomp-exporter:local
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: SECCOMP_EXPORTER_MODE
+              value: demo
+            - name: SECCOMP_LISTEN
+              value: ":9101"
+            - name: SECCOMP_ALLOWLIST_FILE
+              value: /etc/seccomp/allowlist.txt
+          ports:
+            - name: metrics
+              containerPort: 9101
+          volumeMounts:
+            - name: seccomp-allowlist
+              mountPath: /etc/seccomp
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: metrics
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: seccomp-allowlist
+          configMap:
+            name: seccomp-allowlist
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: seccomp-exporter
+  namespace: dockermonitoring
+  labels:
+    app.kubernetes.io/name: seccomp-exporter
+    app.kubernetes.io/part-of: dockermonitoring
+spec:
+  selector:
+    app.kubernetes.io/name: seccomp-exporter
+  ports:
+    - name: metrics
+      port: 9101
+      targetPort: metrics

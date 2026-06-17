@@ -203,6 +203,38 @@ docker compose up --build
 To use a **custom** allowlist with the compose `seccomp-exporter` service, add a volume that mounts your file over `/etc/seccomp/allowlist.txt` (see `[seccomp-exporter/docker-entrypoint.sh](seccomp-exporter/docker-entrypoint.sh)`).
 
 ---
+
+## Stack C — Local Kubernetes
+
+`[k8s/](k8s/)` mirrors the all-in-one Compose stack on Kubernetes: Tomcat twin + Java agent, seccomp-exporter **demo**, Prometheus, and Grafana. The launcher builds local images, loads them into kind or Minikube when detected, applies the manifests, and provisions the existing Grafana dashboards.
+
+```bash
+./start_k8s.sh
+```
+
+Useful checks:
+
+```bash
+./start_k8s.sh --status
+kubectl -n dockermonitoring port-forward svc/grafana 3001:3000
+kubectl -n dockermonitoring port-forward svc/prometheus 9090:9090
+kubectl -n dockermonitoring port-forward svc/instrumented-twin 8080:8080
+```
+
+- Kubernetes docs: `[k8s/README.md](k8s/README.md)`
+- Grafana: [http://localhost:3001](http://localhost:3001) (default `admin` / `admin`)
+- Prometheus: [http://localhost:9090](http://localhost:9090)
+- Tomcat: [http://localhost:8080](http://localhost:8080)
+
+Stop the Kubernetes stack:
+
+```bash
+./start_k8s.sh --delete
+```
+
+For real Kubernetes syscall capture, replace the demo seccomp stream with a privileged sysdig/Falco-style event source and pipe sysdig-shaped NDJSON into `seccomp-exporter`.
+
+---
 Prometheus metrics (first-party names)
 
 These are the metric names defined in this repo (13 total). The JVM agent uses hand-written text exposition; seccomp-exporter also registers standard process_* and go_* collectors.

@@ -1,0 +1,73 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: dockermonitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 2s
+      evaluation_interval: 2s
+
+    scrape_configs:
+      - job_name: echotrace-native
+        static_configs:
+          - targets:
+              - instrumented-twin:9464
+        metrics_path: /metrics
+
+      - job_name: echotrace-seccomp
+        static_configs:
+          - targets:
+              - seccomp-exporter:9101
+        metrics_path: /metrics
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: dockermonitoring
+data:
+  datasources.yml: |
+    apiVersion: 1
+
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        editable: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-providers
+  namespace: dockermonitoring
+data:
+  dashboards.yml: |
+    apiVersion: 1
+
+    providers:
+      - name: Echotrace
+        orgId: 1
+        folder: Echotrace
+        type: file
+        disableDeletion: false
+        editable: true
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seccomp-allowlist
+  namespace: dockermonitoring
+data:
+  allowlist.txt: |
+    read
+    open
+    futex
+    epoll_wait
+    mmap
