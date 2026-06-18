@@ -33,20 +33,34 @@ cluster_name() {
   kubectl config view --minify -o jsonpath='{.clusters[0].name}' 2>/dev/null || true
 }
 
-load_images_if_needed() {
+build_images() {
+  docker build -t "$TWIN_IMAGE" -f "${SCRIPT_DIR}/DockerMonitoring/tomcat-twin/Dockerfile" "$SCRIPT_DIR"
+  docker build -t "$SECCOMP_IMAGE" "${SCRIPT_DIR}/DockerMonitoring/seccomp-exporter"
+}
+
+# Build the local images so the cluster can run them. For Minikube we build
+# directly inside its Docker daemon (via `minikube docker-env`) instead of
+# `minikube image load`, which can fail on the docker driver with
+# "unable to calculate manifest: blob ... not found". For kind we build on the
+# host and load. Otherwise we build on the host and let the user wire up access.
+build_and_load_images() {
   local cluster
   cluster="$(cluster_name)"
 
-  if [[ "$cluster" == kind-* ]] && command -v kind >/dev/null 2>&1; then
+  if [[ "$cluster" == minikube ]] && command -v minikube >/dev/null 2>&1; then
+    header "Building images into the Minikube Docker daemon"
+    eval "$(minikube docker-env)"
+    build_images
+  elif [[ "$cluster" == kind-* ]] && command -v kind >/dev/null 2>&1; then
     local name="${cluster#kind-}"
+    header "Building local images"
+    build_images
     header "Loading images into kind cluster ${name}"
     kind load docker-image "$TWIN_IMAGE" --name "$name"
     kind load docker-image "$SECCOMP_IMAGE" --name "$name"
-  elif [[ "$cluster" == minikube ]] && command -v minikube >/dev/null 2>&1; then
-    header "Loading images into Minikube"
-    minikube image load "$TWIN_IMAGE"
-    minikube image load "$SECCOMP_IMAGE"
   else
+    header "Building local images"
+    build_images
     warn "Cluster '${cluster:-unknown}' was not recognized as kind or Minikube."
     warn "Make sure it can pull or already has ${TWIN_IMAGE} and ${SECCOMP_IMAGE}."
   fi
@@ -90,11 +104,7 @@ esac
 need docker
 need kubectl
 
-header "Building local images"
-docker build -t "$TWIN_IMAGE" -f "${SCRIPT_DIR}/DockerMonitoring/tomcat-twin/Dockerfile" "$SCRIPT_DIR"
-docker build -t "$SECCOMP_IMAGE" "${SCRIPT_DIR}/DockerMonitoring/seccomp-exporter"
-
-load_images_if_needed
+build_and_load_images
 
 header "Applying Kubernetes manifests"
 # kustomize (apply -k) applies all manifests and generates the Grafana

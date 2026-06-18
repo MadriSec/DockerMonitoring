@@ -25,8 +25,9 @@ The script builds local images:
 - `dm-instrumented-twin:local`
 - `dm-seccomp-exporter:local`
 
-It also loads those images into kind or Minikube when those clusters are
-detected and applies everything via Kustomize.
+It makes those images available to the cluster (building straight into the
+Minikube Docker daemon, or building on the host and `kind load`-ing for kind)
+and applies everything via Kustomize.
 
 ## Apply manifests directly (without the script)
 
