@@ -34,8 +34,8 @@ cluster_name() {
 }
 
 build_images() {
-  docker build -t "$TWIN_IMAGE" -f "${SCRIPT_DIR}/DockerMonitoring/tomcat-twin/Dockerfile" "$SCRIPT_DIR"
-  docker build -t "$SECCOMP_IMAGE" "${SCRIPT_DIR}/DockerMonitoring/seccomp-exporter"
+  docker build -t "$TWIN_IMAGE" -f "${SCRIPT_DIR}/src/tomcat-twin/Dockerfile" "$SCRIPT_DIR"
+  docker build -t "$SECCOMP_IMAGE" "${SCRIPT_DIR}/src/seccomp-exporter"
 }
 
 # Build the local images so the cluster can run them. For Minikube we build

@@ -24,7 +24,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENT_PROJECT="${SCRIPT_DIR}/DockerMonitoring/agent"
+AGENT_PROJECT="${SCRIPT_DIR}/src/agent"
 AGENT_JAR="${AGENT_PROJECT}/target/docker-monitoring-agent.jar"
 
 usage() {

@@ -7,7 +7,7 @@ This is a **prototype**: syscall / seccomp event shapes depend on [sysdig](https
 ## Build
 
 ```bash
-cd DockerMonitoring/seccomp-exporter
+cd src/seccomp-exporter
 go build -o seccomp-exporter .
 ```
 

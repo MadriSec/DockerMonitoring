@@ -148,7 +148,7 @@
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 4, "w": 24, "x": 0, "y": 17 },
       "id": 6,
-      "options": { "code": { "language": "markdown", "showLineNumbers": false, "showMiniMap": false }, "content": "**Demo mode:** `docker compose` ships `seccomp-exporter` with synthetic NDJSON (`SECCOMP_EXPORTER_MODE=demo`). **Live sysdig:** set `SECCOMP_EXPORTER_MODE=live` and install sysdig in the image, or pipe `sysdig -pc -j '...' | seccomp-exporter` from a privileged host (Linux). Pin sysdig version and event JSON shape — see `DockerMonitoring/seccomp-exporter/README.md`." },
+      "options": { "code": { "language": "markdown", "showLineNumbers": false, "showMiniMap": false }, "content": "**Demo mode:** `docker compose` ships `seccomp-exporter` with synthetic NDJSON (`SECCOMP_EXPORTER_MODE=demo`). **Live sysdig:** set `SECCOMP_EXPORTER_MODE=live` and install sysdig in the image, or pipe `sysdig -pc -j '...' | seccomp-exporter` from a privileged host (Linux). Pin sysdig version and event JSON shape — see `src/seccomp-exporter/README.md`." },
       "title": "",
       "type": "text"
     }

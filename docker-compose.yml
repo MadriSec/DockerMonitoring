@@ -2,7 +2,7 @@ services:
   instrumented-twin:
     build:
       context: .
-      dockerfile: DockerMonitoring/tomcat-twin/Dockerfile
+      dockerfile: src/tomcat-twin/Dockerfile
     ports:
       - "8080:8080"
       - "9464:9464"
@@ -10,7 +10,7 @@ services:
 
   seccomp-exporter:
     build:
-      context: ./DockerMonitoring/seccomp-exporter
+      context: ./src/seccomp-exporter
     environment:
       SECCOMP_EXPORTER_MODE: demo
       SECCOMP_LISTEN: ":9101"

@@ -52,7 +52,7 @@ mkdir -p "$(dirname "$FILE_SD")"
 printf '[{"targets":["host.docker.internal:%s"]}]\n' "$HOST_PORT" > "$FILE_SD"
 info "Wrote ${FILE_SD} → :${HOST_PORT}"
 
-docker build -q -t dm-seccomp-exporter -f DockerMonitoring/seccomp-exporter/Dockerfile DockerMonitoring/seccomp-exporter
+docker build -q -t dm-seccomp-exporter -f src/seccomp-exporter/Dockerfile src/seccomp-exporter
 docker rm -f dm-seccomp-demo >/dev/null 2>&1 || true
 
 ALLOWLIST_VOL=()
