@@ -1,0 +1,31 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Deploy the whole stack standalone from the repo root:
+#   kubectl apply -k .
+# (Images must already exist in the cluster; build/load them first, e.g. via
+#  ./start_k8s.sh, which also wraps this.)
+#
+# Lives at the repo root rather than under k8s/ so the dashboards under
+# observability/ are reachable by configMapGenerator (kustomize refuses to read
+# files outside the kustomization directory).
+
+namespace: dockermonitoring
+
+resources:
+  - k8s/namespace.yaml
+  - k8s/config.yaml
+  - k8s/workloads.yaml
+  - k8s/observability.yaml
+
+# Generate the Grafana dashboards ConfigMap from the canonical JSON files
+# instead of duplicating them. Keep the stable name (no hash suffix) so the
+# Grafana Deployment's volume reference resolves.
+configMapGenerator:
+  - name: grafana-dashboards
+    files:
+      - observability/grafana/dashboards/echotrace-native.json
+      - observability/grafana/dashboards/echotrace-seccomp.json
+
+generatorOptions:
+  disableNameSuffixHash: true

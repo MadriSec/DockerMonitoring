@@ -26,6 +26,13 @@ spec:
               containerPort: 8080
             - name: metrics
               containerPort: 9464
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
           readinessProbe:
             tcpSocket:
               port: http
@@ -89,6 +96,13 @@ spec:
           ports:
             - name: metrics
               containerPort: 9101
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
           volumeMounts:
             - name: seccomp-allowlist
               mountPath: /etc/seccomp

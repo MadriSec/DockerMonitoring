@@ -206,10 +206,16 @@ To use a **custom** allowlist with the compose `seccomp-exporter` service, add a
 
 ## Stack C — Local Kubernetes
 
-`[k8s/](k8s/)` mirrors the all-in-one Compose stack on Kubernetes: Tomcat twin + Java agent, seccomp-exporter **demo**, Prometheus, and Grafana. The launcher builds local images, loads them into kind or Minikube when detected, applies the manifests, and provisions the existing Grafana dashboards.
+`[k8s/](k8s/)` mirrors the all-in-one Compose stack on Kubernetes: Tomcat twin + Java agent, seccomp-exporter **demo**, Prometheus, and Grafana. Each workload sets CPU/memory requests and limits, and Grafana's admin credentials come from a `grafana-admin` Secret instead of plaintext env. The launcher builds local images, loads them into kind or Minikube when detected, and applies everything via Kustomize.
 
 ```bash
 ./start_k8s.sh
+```
+
+Or apply the manifests directly once the images exist in the cluster — the root `[kustomization.yaml](kustomization.yaml)` applies `k8s/*.yaml` and generates the Grafana dashboards ConfigMap from `observability/grafana/dashboards/`:
+
+```bash
+kubectl apply -k .
 ```
 
 Useful checks:
@@ -222,7 +228,7 @@ kubectl -n dockermonitoring port-forward svc/instrumented-twin 8080:8080
 ```
 
 - Kubernetes docs: `[k8s/README.md](k8s/README.md)`
-- Grafana: [http://localhost:3001](http://localhost:3001) (default `admin` / `admin`)
+- Grafana: [http://localhost:3001](http://localhost:3001) (default `admin` / `admin` from the `grafana-admin` Secret — override before any non-local use)
 - Prometheus: [http://localhost:9090](http://localhost:9090)
 - Tomcat: [http://localhost:8080](http://localhost:8080)
 

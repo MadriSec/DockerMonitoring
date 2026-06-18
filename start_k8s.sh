@@ -16,7 +16,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 NAMESPACE="${K8S_NAMESPACE:-dockermonitoring}"
 TWIN_IMAGE="${TWIN_IMAGE:-dm-instrumented-twin:local}"
 SECCOMP_IMAGE="${SECCOMP_IMAGE:-dm-seccomp-exporter:local}"
-DASHBOARD_DIR="${SCRIPT_DIR}/observability/grafana/dashboards"
 
 header() { echo -e "\n\033[1;36m==> $1\033[0m" >&2; }
 info()   { echo -e "\033[0;32m    $1\033[0m" >&2; }
@@ -51,18 +50,6 @@ load_images_if_needed() {
     warn "Cluster '${cluster:-unknown}' was not recognized as kind or Minikube."
     warn "Make sure it can pull or already has ${TWIN_IMAGE} and ${SECCOMP_IMAGE}."
   fi
-}
-
-create_dashboard_configmap() {
-  if [[ ! -d "$DASHBOARD_DIR" ]]; then
-    err "dashboard directory missing: $DASHBOARD_DIR"
-    exit 1
-  fi
-
-  header "Provisioning Grafana dashboards"
-  kubectl -n "$NAMESPACE" create configmap grafana-dashboards \
-    --from-file="$DASHBOARD_DIR" \
-    --dry-run=client -o yaml | kubectl apply -f -
 }
 
 wait_for_rollout() {
@@ -110,11 +97,9 @@ docker build -t "$SECCOMP_IMAGE" "${SCRIPT_DIR}/DockerMonitoring/seccomp-exporte
 load_images_if_needed
 
 header "Applying Kubernetes manifests"
-kubectl apply -f "${SCRIPT_DIR}/k8s/namespace.yaml"
-kubectl apply -f "${SCRIPT_DIR}/k8s/config.yaml"
-create_dashboard_configmap
-kubectl apply -f "${SCRIPT_DIR}/k8s/workloads.yaml"
-kubectl apply -f "${SCRIPT_DIR}/k8s/observability.yaml"
+# kustomize (apply -k) applies all manifests and generates the Grafana
+# dashboards ConfigMap from observability/grafana/dashboards/*.json.
+kubectl apply -k "${SCRIPT_DIR}"
 
 wait_for_rollout
 

@@ -26,8 +26,36 @@ The script builds local images:
 - `dm-seccomp-exporter:local`
 
 It also loads those images into kind or Minikube when those clusters are
-detected, applies `k8s/*.yaml`, and creates the Grafana dashboard ConfigMap from
-the JSON files under `observability/grafana/dashboards/`.
+detected and applies everything via Kustomize.
+
+## Apply manifests directly (without the script)
+
+Once the `dm-instrumented-twin:local` and `dm-seccomp-exporter:local` images
+exist in the cluster, the manifests are self-contained via Kustomize. From the
+repository root:
+
+```bash
+kubectl apply -k .
+```
+
+The root `kustomization.yaml` applies `k8s/*.yaml` and generates the
+`grafana-dashboards` ConfigMap from the JSON files under
+`observability/grafana/dashboards/` (no duplication). It lives at the repo root
+rather than under `k8s/` because Kustomize will not read generator files outside
+the kustomization directory.
+
+## Grafana credentials
+
+Admin credentials come from the `grafana-admin` Secret (`k8s/config.yaml`),
+defaulting to `admin` / `admin` for local use. Override before any non-local
+deployment:
+
+```bash
+kubectl -n dockermonitoring create secret generic grafana-admin \
+  --from-literal=admin-user=admin \
+  --from-literal=admin-password='<strong-password>' \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
 
 ## Open locally
 
