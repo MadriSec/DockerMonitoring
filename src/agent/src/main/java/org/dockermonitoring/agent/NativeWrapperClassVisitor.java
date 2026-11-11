@@ -25,7 +25,6 @@ final class NativeWrapperClassVisitor extends ClassVisitor {
     private static final String PREFIX = NativeWrapperAgent.NATIVE_METHOD_PREFIX;
 
     private static final String TRACKER_INTERNAL = "org/dockermonitoring/bootstrap/NativeMethodTracker";
-    private static final String TRACKER_DESCRIPTOR = "Lorg/dockermonitoring/bootstrap/NativeMethodTracker;";
 
     private final String dotClassName;       // e.g. "com.example.Foo"
     private final String internalClassName;  // e.g. "com/example/Foo"
@@ -55,6 +54,15 @@ final class NativeWrapperClassVisitor extends ClassVisitor {
         return super.visitMethod(access, name, descriptor, signature, exceptions);
     }
 
+    /** Names of the native methods this visitor rewrote. */
+    List<String> wrappedNames() {
+        List<String> names = new ArrayList<>();
+        for (MethodInfo m : wrapped) {
+            names.add(m.name);
+        }
+        return names;
+    }
+
     @Override
     public void visitEnd() {
         for (MethodInfo m : wrapped) {
@@ -66,7 +74,7 @@ final class NativeWrapperClassVisitor extends ClassVisitor {
     /**
      * Emits a non-native method with the original signature whose body is:
      * <pre>
-     *   NativeMethodTracker.getInstance().recordInvocation("Class.method");
+     *   NativeMethodTracker.record("Class.method");
      *   return $$dm$$_method(args...);
      * </pre>
      */
@@ -79,11 +87,9 @@ final class NativeWrapperClassVisitor extends ClassVisitor {
                 m.signature, m.exceptions);
         mv.visitCode();
 
-        // --- Tracker call: NativeMethodTracker.getInstance().recordInvocation(key) ---
-        mv.visitMethodInsn(Opcodes.INVOKESTATIC, TRACKER_INTERNAL, "getInstance",
-                "()" + TRACKER_DESCRIPTOR, false);
+        // --- Tracker call: NativeMethodTracker.record(key) ---
         mv.visitLdcInsn(dotClassName + "." + m.name);
-        mv.visitMethodInsn(Opcodes.INVOKEVIRTUAL, TRACKER_INTERNAL, "recordInvocation",
+        mv.visitMethodInsn(Opcodes.INVOKESTATIC, TRACKER_INTERNAL, "record",
                 "(Ljava/lang/String;)V", false);
 
         // --- Delegate: load args, call $$dm$$_<name>, return the result ---

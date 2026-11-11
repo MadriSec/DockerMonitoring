@@ -82,7 +82,7 @@ final class NativeLibraryMonitor {
     }
 
     static void refresh() throws IOException {
-        Path maps = Path.of("/proc/self/maps");
+        Path maps = java.nio.file.Paths.get("/proc/self/maps");
         if (!Files.isReadable(maps)) {
             return;
         }

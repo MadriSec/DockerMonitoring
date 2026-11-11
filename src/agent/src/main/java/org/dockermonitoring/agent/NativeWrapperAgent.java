@@ -8,6 +8,8 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.jar.JarFile;
 
+import org.dockermonitoring.bootstrap.NativeMethodTracker;
+
 /**
  * Premain entry point.
  *
@@ -69,14 +71,30 @@ public final class NativeWrapperAgent {
             return;
         }
 
+        // Initialise the tracker before any wrapper can call it.
+        NativeMethodTracker.getInstance();
+        Coverage.setListed(transformer.targets());
+
         inst.addTransformer(transformer, true);
         inst.setNativeMethodPrefix(transformer, NATIVE_METHOD_PREFIX);
+
+        // Listed classes that were loaded before the transformer was added
+        // cannot be wrapped; record them so they are reported, not just absent.
+        int preloaded = 0;
+        for (Class<?> c : inst.getAllLoadedClasses()) {
+            if (transformer.targets().containsKey(c.getName())) {
+                Coverage.markPreloaded(c.getName());
+                preloaded++;
+            }
+        }
+        Coverage.startWriterIfEnabled();
 
         PrometheusExporter.startIfEnabled();
 
         System.err.println("[DockerMonitoring] premain loaded;"
                 + " prefix=" + NATIVE_METHOD_PREFIX
                 + "; classes=" + transformer.targetClassCount()
+                + "; preloaded classes=" + preloaded
                 + "; tracker=" + trackerJar);
     }
 

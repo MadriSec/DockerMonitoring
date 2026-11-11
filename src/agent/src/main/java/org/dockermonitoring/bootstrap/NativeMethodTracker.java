@@ -60,13 +60,43 @@ public final class NativeMethodTracker {
         return INSTANCE;
     }
 
+    /** Set while a thread is inside {@link #record}; JDK natives wrapped by
+     *  the agent can be reached from the map/adder code below. */
+    private static final ThreadLocal<Boolean> RECORDING = new ThreadLocal<>();
+
+    /**
+     * Entry point used by the injected wrappers. Static so a wrapper that runs
+     * while this class is still initialising (INSTANCE == null) is a no-op,
+     * and guarded against re-entry from wrapped JDK natives.
+     */
+    public static void record(String methodKey) {
+        NativeMethodTracker tracker = INSTANCE;
+        if (tracker == null || RECORDING.get() != null) {
+            return;
+        }
+        RECORDING.set(Boolean.TRUE);
+        try {
+            tracker.recordInvocation(methodKey);
+        } finally {
+            RECORDING.remove();
+        }
+    }
+
     /**
      * Records a single invocation of a native method.
      *
      * @param methodKey fully-qualified method key, e.g. {@code java.lang.System.nanoTime}
      */
     public void recordInvocation(String methodKey) {
-        invocations.computeIfAbsent(methodKey, k -> new LongAdder()).increment();
+        LongAdder adder = invocations.get(methodKey);
+        if (adder == null) {
+            LongAdder fresh = new LongAdder();
+            adder = invocations.putIfAbsent(methodKey, fresh);
+            if (adder == null) {
+                adder = fresh;
+            }
+        }
+        adder.increment();
     }
 
     /**

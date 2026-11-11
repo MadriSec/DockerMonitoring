@@ -3,7 +3,9 @@ org/dockermonitoring/agent/NativeWrapperClassVisitor.class
 org/dockermonitoring/agent/PrometheusExporter$IndexHandler.class
 org/dockermonitoring/bootstrap/NativeMethodTracker$1.class
 org/dockermonitoring/agent/PrometheusExporter.class
+org/dockermonitoring/agent/PrometheusExporter$1.class
 org/dockermonitoring/agent/ConfigLoader.class
+org/dockermonitoring/agent/Coverage.class
 org/dockermonitoring/agent/NativeWrapperClassVisitor$MethodInfo.class
 org/dockermonitoring/agent/NativeWrapperTransformer.class
 org/dockermonitoring/agent/NativeLibraryMonitor.class
