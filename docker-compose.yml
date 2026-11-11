@@ -25,11 +25,22 @@ services:
       - --storage.tsdb.retention.time=12h
     volumes:
       - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
     ports:
       - "9090:9090"
     depends_on:
       - instrumented-twin
       - seccomp-exporter
+    networks: [echotrace]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - ./observability/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
     networks: [echotrace]
 
   grafana:
