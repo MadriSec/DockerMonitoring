@@ -10,12 +10,23 @@ services:
       - --web.enable-lifecycle
     volumes:
       - ./prometheus/prometheus.host.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/rules:/etc/prometheus/rules:ro
       - ./prometheus/file_sd:/etc/prometheus/file_sd:rw
       - prometheus-data:/prometheus
     ports:
       - "${PROMETHEUS_PORT:-9095}:9090"
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks: [observability]
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "${ALERTMANAGER_PORT:-9096}:9093"
     networks: [observability]
 
   grafana:

@@ -50,6 +50,7 @@ Scrape `http://127.0.0.1:9101/metrics`.
 | `seccomp_profile_coverage_ratio` | Gauge | `allowlisted_syscalls_observed / allowlist_size` |
 | `seccomp_exporter_lines_read_total` | Counter | Stdin lines |
 | `seccomp_exporter_json_parse_errors_total` | Counter | Invalid JSON |
+| `seccomp_exporter_last_event_timestamp_seconds` | Gauge | Unix time of the last parsed event, 0 until the first; `time()` minus this shows a stalled event source |
 
 ## Grafana
 
@@ -66,3 +67,10 @@ See [`examples/seccomp-allowlist.txt`](examples/seccomp-allowlist.txt).
 ## Sysdig version
 
 Document the exact `sysdig --version`, CLI invocation, and a **redacted sample JSON line** in [`../docs/seccomp-sysdig.md`](../docs/seccomp-sysdig.md) once you lock a schema.
+
+## Health and tests
+
+- `GET /healthz` returns `ok` while the process is serving. It says nothing about whether
+  events are arriving; use `seccomp_exporter_last_event_timestamp_seconds` for that.
+- `go test -race ./...` covers allowlist matching, coverage, bad input, label fallbacks and
+  allowlist parsing.

@@ -26,6 +26,13 @@ configMapGenerator:
     files:
       - observability/grafana/dashboards/echotrace-native.json
       - observability/grafana/dashboards/echotrace-seccomp.json
+  # Alert rules and Alertmanager config, from the same files Compose mounts.
+  - name: prometheus-rules
+    files:
+      - observability/prometheus/rules/dockermonitoring.rules.yml
+  - name: alertmanager-config
+    files:
+      - observability/alertmanager/alertmanager.yml
 
 generatorOptions:
   disableNameSuffixHash: true

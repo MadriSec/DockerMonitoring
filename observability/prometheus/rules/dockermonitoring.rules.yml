@@ -1,0 +1,123 @@
+# Alert rules for the DockerMonitoring stack.
+# Each alert has a runbook entry in docs/runbook.md.
+# Checked in CI with: promtool check rules, promtool test rules.
+
+groups:
+  - name: dockermonitoring-availability
+    rules:
+      - alert: MonitoringTargetDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} target {{ $labels.instance }} is down"
+          description: "Prometheus has not been able to scrape {{ $labels.instance }} for 1 minute. Nothing from this target is being checked."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#monitoringtargetdown"
+
+      - alert: SeccompEventStreamStalled
+        expr: |
+          time() - seccomp_exporter_last_event_timestamp_seconds > 120
+          and
+          seccomp_exporter_last_event_timestamp_seconds > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No syscall events on {{ $labels.instance }} for {{ $value | humanizeDuration }}"
+          description: "The exporter is up but its event source (sysdig) has gone quiet. Syscalls made now are not being checked against the allowlist."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompeventstreamstalled"
+
+      - alert: SeccompNoEventsSinceStart
+        expr: seccomp_exporter_lines_read_total == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }} has received no events since it started"
+          description: "The exporter has been up for 5 minutes and has not read a single line. The event source was probably never connected."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompnoeventssincestart"
+
+      - alert: SeccompEventParseErrors
+        expr: |
+          rate(seccomp_exporter_json_parse_errors_total[5m])
+            / rate(seccomp_exporter_lines_read_total[5m]) > 0.01
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $value | humanizePercentage }} of events on {{ $labels.instance }} fail to parse"
+          description: "Events that fail to parse are dropped, so the syscalls in them are not checked."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompeventparseerrors"
+
+  - name: dockermonitoring-seccomp
+    rules:
+      # The counter is compared with 0 instead of using increase(): a syscall made
+      # only at startup (for example the JVM's fchdir) creates the series at its
+      # final value, and increase() of a series that never changes is 0.
+      - alert: UnexpectedSyscallObserved
+        expr: sum by (container, syscall) (seccomp_unexpected_syscall_total) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.container }} called {{ $labels.syscall }}, which is not on its allowlist"
+          description: "Seen {{ $value }} times since the exporter started. With the seccomp profile enforced this call would be denied."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#unexpectedsyscallobserved"
+
+      - alert: UnexpectedSyscallOngoing
+        expr: sum by (container, syscall) (rate(seccomp_unexpected_syscall_total[5m])) > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.container }} keeps calling {{ $labels.syscall }}, which is not on its allowlist"
+          description: "{{ $value | humanize }} calls per second over the last 5 minutes. This is either a gap in the profile on a hot path or behaviour the container should not have."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#unexpectedsyscallongoing"
+
+      - alert: SeccompAllowlistNotLoaded
+        expr: seccomp_profile_allowlist_size == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }} is running without an allowlist"
+          description: "With no allowlist every syscall counts as expected, so UnexpectedSyscall alerts can never fire."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompallowlistnotloaded"
+
+      - alert: SeccompProfileMostlyUnused
+        expr: |
+          seccomp_profile_coverage_ratio < 0.25
+          and seccomp_profile_allowlist_size > 0
+          and seccomp_exporter_lines_read_total > 0
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of the allowlist on {{ $labels.instance }} has been used"
+          description: "After an hour of traffic most allowlisted syscalls were never called. The profile may be wider than this workload needs."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompprofilemostlyunused"
+
+  - name: dockermonitoring-native
+    rules:
+      - alert: NativeMethodListNotLoaded
+        expr: sum by (job, instance) (dockermonitoring_listed_native_methods) == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The Java agent on {{ $labels.instance }} has an empty native-method list"
+          description: "The agent is running but wraps nothing, so no native calls are counted."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#nativemethodlistnotloaded"
+
+      - alert: NativeMethodsNoneWrapped
+        expr: |
+          sum by (job, instance) (dockermonitoring_listed_native_methods{status="wrapped"}) == 0
+          and
+          sum by (job, instance) (dockermonitoring_listed_native_methods) > 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "The Java agent on {{ $labels.instance }} has a list but wrapped none of it"
+          description: "Listed natives exist but none is wrapped after 10 minutes. Either the list does not match this application or every listed class loaded before the agent."
+          runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#nativemethodsnonewrapped"
