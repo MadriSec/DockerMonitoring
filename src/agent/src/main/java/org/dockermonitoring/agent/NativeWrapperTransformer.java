@@ -29,6 +29,10 @@ final class NativeWrapperTransformer implements ClassFileTransformer {
         this.targetMethods = ConfigLoader.load();
     }
 
+    Map<String, Set<String>> targets() {
+        return targetMethods;
+    }
+
     boolean isEmpty() {
         return targetMethods.isEmpty();
     }
@@ -68,10 +72,12 @@ final class NativeWrapperTransformer implements ClassFileTransformer {
             // COMPUTE_FRAMES would trigger classloading of referenced types via
             // Type.getCommonSuperClass, which is unsafe during transformation.
             ClassWriter cw = new ClassWriter(cr, ClassWriter.COMPUTE_MAXS);
-            cr.accept(new NativeWrapperClassVisitor(cw, dotName, methods), 0);
+            NativeWrapperClassVisitor visitor = new NativeWrapperClassVisitor(cw, dotName, methods);
+            cr.accept(visitor, 0);
             byte[] out = cw.toByteArray();
+            Coverage.markWrapped(dotName, visitor.wrappedNames());
             System.err.println("[DockerMonitoring] wrapped native methods in " + dotName
-                    + " (targets=" + methods.size() + ")");
+                    + " (targets=" + methods.size() + ", wrapped=" + visitor.wrappedNames().size() + ")");
             return out;
         } catch (Throwable t) {
             // Never let a transformer failure bubble into the JVM's
@@ -96,8 +102,23 @@ final class NativeWrapperTransformer implements ClassFileTransformer {
      * methods are key instrumentation targets for many Java applications.
      */
     private static boolean isSkippedPackage(String internalName) {
-        // Bootstrap / JDK internals — loaded before premain, can't retransform
-        // to add new methods.
+        // Our own agent + bootstrap helper packages
+        if (internalName.startsWith("org/dockermonitoring/")) {
+            return true;
+        }
+        // Method handles: signature-polymorphic natives must stay native, and
+        // the tracker's own code may bootstrap lambdas through these classes.
+        if (internalName.startsWith("java/lang/invoke/")) {
+            return true;
+        }
+        // JDK classes that load after premain can be wrapped like any other:
+        // the transformer sees them at load time, before they are linked.
+        // Classes loaded before premain never reach transform() (see
+        // Coverage.markPreloaded). -Ddockermonitoring.wrap.jdk=false restores
+        // the old behaviour of skipping the JDK entirely.
+        if (WRAP_JDK) {
+            return false;
+        }
         if (internalName.startsWith("java/")
                 || internalName.startsWith("javax/")
                 || internalName.startsWith("jdk/")
@@ -109,7 +130,9 @@ final class NativeWrapperTransformer implements ClassFileTransformer {
                 && !internalName.startsWith("com/sun/jna/")) {
             return true;
         }
-        // Our own agent + bootstrap helper packages
-        return internalName.startsWith("org/dockermonitoring/");
+        return false;
     }
+
+    private static final boolean WRAP_JDK =
+            !"false".equalsIgnoreCase(System.getProperty("dockermonitoring.wrap.jdk", "true"));
 }

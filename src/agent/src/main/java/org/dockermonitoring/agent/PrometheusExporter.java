@@ -150,6 +150,29 @@ final class PrometheusExporter {
             sb.append("# TYPE dockermonitoring_unique_native_methods gauge\n");
             sb.append("dockermonitoring_unique_native_methods ").append(snapshot.size()).append('\n');
 
+            Map<String, String> coverage = Coverage.snapshot();
+            int[] byStatus = new int[3];
+            sb.append("# HELP dockermonitoring_native_method_status ")
+                    .append("Listed native methods by instrumentation status (wrapped, preloaded, not_loaded)\n");
+            sb.append("# TYPE dockermonitoring_native_method_status gauge\n");
+            for (Entry<String, String> e : coverage.entrySet()) {
+                String key = e.getKey();
+                int lastDot = key.lastIndexOf('.');
+                String status = e.getValue();
+                byStatus["wrapped".equals(status) ? 0 : "preloaded".equals(status) ? 1 : 2]++;
+                sb.append("dockermonitoring_native_method_status{class=\"")
+                        .append(escape(key.substring(0, lastDot)))
+                        .append("\",method=\"")
+                        .append(escape(key.substring(lastDot + 1)))
+                        .append("\",status=\"").append(status).append("\"} 1\n");
+            }
+            sb.append("# HELP dockermonitoring_listed_native_methods ")
+                    .append("Listed native methods per instrumentation status\n");
+            sb.append("# TYPE dockermonitoring_listed_native_methods gauge\n");
+            sb.append("dockermonitoring_listed_native_methods{status=\"wrapped\"} ").append(byStatus[0]).append('\n');
+            sb.append("dockermonitoring_listed_native_methods{status=\"preloaded\"} ").append(byStatus[1]).append('\n');
+            sb.append("dockermonitoring_listed_native_methods{status=\"not_loaded\"} ").append(byStatus[2]).append('\n');
+
             sb.append("# HELP dockermonitoring_native_library_mapped ")
                     .append("Mapped .so from /proc/self/maps (1 if present)\n");
             sb.append("# TYPE dockermonitoring_native_library_mapped gauge\n");

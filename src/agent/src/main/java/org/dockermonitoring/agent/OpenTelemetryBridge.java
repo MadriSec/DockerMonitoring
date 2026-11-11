@@ -89,7 +89,7 @@ final class OpenTelemetryBridge {
                 .setMeterProvider(meterProvider)
                 .build();
 
-        var meter = sdk.getMeter("org.dockermonitoring.agent");
+        io.opentelemetry.api.metrics.Meter meter = sdk.getMeter("org.dockermonitoring.agent");
 
         meter.gaugeBuilder("dockermonitoring.native_method.invocations")
                 .setDescription("Native method invocation counts (instrumented wrappers only)")
