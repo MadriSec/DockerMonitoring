@@ -120,4 +120,5 @@ info "Tomcat:     kubectl -n ${NAMESPACE} port-forward svc/instrumented-twin 808
 info "JVM metrics: kubectl -n ${NAMESPACE} port-forward svc/instrumented-twin 9464:9464"
 info "Seccomp:    kubectl -n ${NAMESPACE} port-forward svc/seccomp-exporter 9101:9101"
 info "Prometheus: kubectl -n ${NAMESPACE} port-forward svc/prometheus 9090:9090"
+info "Alerts:     kubectl -n ${NAMESPACE} port-forward svc/alertmanager 9093:9093"
 info "Grafana:    kubectl -n ${NAMESPACE} port-forward svc/grafana 3001:3000  (admin / admin)"

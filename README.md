@@ -1,5 +1,7 @@
 # DockerMonitoring for Echotrace
 
+[![CI](https://github.com/MadriSec/DockerMonitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/MadriSec/DockerMonitoring/actions/workflows/ci.yml)
+
 Java **JNI / native-method** visibility (`dockermonitoring_`*) plus **syscall / seccomp-style** metrics (`seccomp_`*) for Prometheus and Grafana.
 
 This project complements [MadriSec/Echotrace](https://github.com/MadriSec/EchoTrace) (EchoTrace static analysis). DockerMonitoring measures what actually runs: which configured native methods fire, and which syscalls show up against an allowlist. Together they help narrow the gap between static overapproximation and runtime ground truth.
@@ -349,6 +351,56 @@ cd src/agent
 ```
 
 ---
+
+## Alerts
+
+Prometheus evaluates the rules in
+[`observability/prometheus/rules/dockermonitoring.rules.yml`](observability/prometheus/rules/dockermonitoring.rules.yml)
+and sends firing alerts to Alertmanager, which groups them, routes by severity and
+suppresses alerts that another alert already explains. All three stacks include both.
+
+| Alert | Severity | Fires when |
+|---|---|---|
+| `MonitoringTargetDown` | critical | a scrape target has been unreachable for 1 minute |
+| `SeccompEventStreamStalled` | warning | the exporter is up but has seen no event for 2 minutes |
+| `SeccompNoEventsSinceStart` | warning | the exporter has read nothing 5 minutes after starting |
+| `SeccompEventParseErrors` | warning | more than 1% of events fail to parse |
+| `UnexpectedSyscallObserved` | warning | a container made a syscall that is not on its allowlist |
+| `UnexpectedSyscallOngoing` | critical | it keeps making that syscall for 2 minutes |
+| `SeccompAllowlistNotLoaded` | critical | the exporter runs with an empty allowlist, so nothing can be flagged |
+| `SeccompProfileMostlyUnused` | info | under 25% of the allowlist was used in an hour |
+| `NativeMethodListNotLoaded` | warning | the Java agent has an empty native-method list |
+| `NativeMethodsNoneWrapped` | warning | the agent has a list but wrapped none of it |
+
+Four of the ten watch the monitoring itself. A stack that has silently stopped checking
+looks exactly like a healthy one, so those cases alert too.
+
+- **Runbook:** [`docs/runbook.md`](docs/runbook.md) has an entry per alert (what it means,
+  what to check, how to fix). Every alert links to its entry.
+- **Tests:** [`dockermonitoring.rules.test.yml`](observability/prometheus/rules/dockermonitoring.rules.test.yml)
+  replays synthetic series through the rules, including the awkward case of a syscall made
+  only once at startup.
+- **Where:** Alertmanager is on port 9096 in Stack A and 9093 in Stacks B and C;
+  Prometheus shows rule state under `/alerts`.
+- **Delivery:** the receivers ship empty, so alerts show in the Alertmanager UI and go
+  nowhere else. Add a Slack, webhook or email block in
+  [`alertmanager.yml`](observability/alertmanager/alertmanager.yml) to send them.
+
+```bash
+# run the rule tests locally
+docker run --rm -v "$PWD/observability:/o:ro" --entrypoint promtool prom/prometheus:v2.52.0 \
+  test rules /o/prometheus/rules/dockermonitoring.rules.test.yml
+```
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push to `main` and every pull request:
+
+- **Exporter:** `gofmt`, `go vet`, `go test -race`, and the image build.
+- **Agent:** Maven build to Java 8 bytecode.
+- **Monitoring config:** `promtool check rules`, `promtool test rules`, `promtool check config`,
+  `amtool check-config`, a check that every alert has a runbook entry, `docker compose config`
+  and `kubectl kustomize`.
 
 ## Grafana dashboards
 

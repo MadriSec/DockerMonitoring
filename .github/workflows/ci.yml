@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  exporter:
+    name: seccomp-exporter (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: src/seccomp-exporter
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+          cache-dependency-path: src/seccomp-exporter/go.sum
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -d .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+      - name: Build image
+        run: docker build -t seccomp-exporter:ci .
+
+  agent:
+    name: Java agent (Maven, Java 8 bytecode)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn -B -ntp -f src/agent/pom.xml package
+
+  monitoring-config:
+    name: Alert rules and stack config
+    runs-on: ubuntu-latest
+    env:
+      PROM_IMAGE: prom/prometheus:v2.52.0
+      AM_IMAGE: prom/alertmanager:v0.27.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: promtool check rules
+        run: >
+          docker run --rm -v "$PWD/observability:/o:ro" --entrypoint promtool "$PROM_IMAGE"
+          check rules /o/prometheus/rules/dockermonitoring.rules.yml
+      - name: promtool test rules
+        run: >
+          docker run --rm -v "$PWD/observability:/o:ro" --entrypoint promtool "$PROM_IMAGE"
+          test rules /o/prometheus/rules/dockermonitoring.rules.test.yml
+      - name: promtool check config
+        run: |
+          for f in prometheus.yml prometheus.host.yml; do
+            docker run --rm -v "$PWD/observability/prometheus:/etc/prometheus:ro" \
+              --entrypoint promtool "$PROM_IMAGE" check config "/etc/prometheus/$f"
+          done
+      - name: amtool check-config
+        run: >
+          docker run --rm -v "$PWD/observability:/o:ro" --entrypoint amtool "$AM_IMAGE"
+          check-config /o/alertmanager/alertmanager.yml
+      - name: Every alert has a runbook entry
+        run: |
+          missing=0
+          for a in $(grep -oP '(?<=alert: )\w+' observability/prometheus/rules/dockermonitoring.rules.yml); do
+            grep -q "^## $a\$" docs/runbook.md || { echo "no runbook entry for $a"; missing=1; }
+          done
+          exit $missing
+      - name: docker compose config
+        run: |
+          docker compose -f docker-compose.yml config -q
+          docker compose -f observability/docker-compose.yml config -q
+      - name: kustomize build
+        run: kubectl kustomize . > /dev/null

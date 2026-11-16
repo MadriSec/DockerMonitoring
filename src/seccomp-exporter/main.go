@@ -8,11 +8,13 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -27,73 +29,24 @@ func main() {
 	blockedRaw := flag.String("blocked-if-evt-type-prefix", "", "If non-empty, increment blocked counter when evt.type has this prefix (sysdig-specific; pin your filter output)")
 	flag.Parse()
 
-	allow := loadAllowlist(*allowlistPath)
-
 	reg := prometheus.NewRegistry()
 	reg.MustRegister(prometheus.NewProcessCollector(prometheus.ProcessCollectorOpts{}))
 	reg.MustRegister(prometheus.NewGoCollector())
 
-	lines := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "seccomp_exporter_lines_read_total",
-		Help: "NDJSON lines read from stdin",
+	st := newState(reg, config{
+		allow:            loadAllowlist(*allowlistPath),
+		containerFixed:   *container,
+		syscallField:     *syscallField,
+		containerField:   *containerField,
+		blockedEvtPrefix: *blockedRaw,
 	})
-	parseErr := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "seccomp_exporter_json_parse_errors_total",
-		Help: "Lines that failed JSON decode",
-	})
-	seccompObserved := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "seccomp_syscall_observed_total",
-		Help: "Sysdig / audit events counted by extracted syscall or evt.type",
-	}, []string{"syscall", "container"})
-	seccompBlocked := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "seccomp_syscall_blocked_total",
-		Help: "Events classified as blocked/denied (heuristic; tune -blocked-if-evt-type-prefix for your sysdig version)",
-	}, []string{"syscall", "container"})
-	seccompUnexpected := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "seccomp_unexpected_syscall_total",
-		Help: "Observed syscalls not present in allowlist (-allowlist-file)",
-	}, []string{"syscall", "container"})
-	allowlistSize := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "seccomp_profile_allowlist_size",
-		Help: "Number of syscall names in allowlist file",
-	})
-	observedDistinct := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "seccomp_observed_distinct_syscalls",
-		Help: "Distinct syscall names observed on stdin since process start",
-	})
-	allowlistedHit := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "seccomp_allowlisted_syscalls_observed",
-		Help: "Count of allowlist entries that have been observed at least once",
-	})
-	coverage := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "seccomp_profile_coverage_ratio",
-		Help: "allowlisted_syscalls_observed / allowlist_size (0 if allowlist empty)",
-	})
-
-	reg.MustRegister(lines, parseErr, seccompObserved, seccompBlocked, seccompUnexpected,
-		allowlistSize, observedDistinct, allowlistedHit, coverage)
-
-	allowlistSize.Set(float64(len(allow)))
-
-	st := &state{
-		allow:             allow,
-		containerFixed:    *container,
-		syscallField:      *syscallField,
-		containerField:    *containerField,
-		blockedEvtPrefix:  *blockedRaw,
-		lines:             lines,
-		parseErr:          parseErr,
-		seccompObserved:   seccompObserved,
-		seccompBlocked:    seccompBlocked,
-		seccompUnexpected: seccompUnexpected,
-		observedDistinct:  observedDistinct,
-		allowlistedHit:    allowlistedHit,
-		coverage:          coverage,
-		seen:              make(map[string]struct{}),
-		hitAllow:          make(map[string]struct{}),
-	}
 
 	http.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{Registry: reg}))
+	// Liveness only: the process is up and serving. Whether events are still
+	// arriving is a metrics question (seccomp_exporter_last_event_timestamp_seconds).
+	http.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprintln(w, "ok")
+	})
 	go func() {
 		log.Printf("seccomp-exporter metrics on http://%s/metrics", *listen)
 		if err := http.ListenAndServe(*listen, nil); err != nil {
@@ -101,7 +54,14 @@ func main() {
 		}
 	}()
 
-	sc := bufio.NewScanner(os.Stdin)
+	if err := st.consume(os.Stdin); err != nil {
+		log.Printf("stdin: %v", err)
+	}
+}
+
+// consume reads NDJSON from r until EOF, one event per line.
+func (st *state) consume(r io.Reader) error {
+	sc := bufio.NewScanner(r)
 	// Very long sysdig JSON lines
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
@@ -109,9 +69,85 @@ func main() {
 	for sc.Scan() {
 		st.handleLine(sc.Text())
 	}
-	if err := sc.Err(); err != nil {
-		log.Printf("stdin: %v", err)
+	return sc.Err()
+}
+
+type config struct {
+	allow            map[string]struct{}
+	containerFixed   string
+	syscallField     string
+	containerField   string
+	blockedEvtPrefix string
+}
+
+// newState builds the exporter's metrics, registers them on reg and returns
+// the event handler. Tests pass their own registry.
+func newState(reg prometheus.Registerer, cfg config) *state {
+	if cfg.allow == nil {
+		cfg.allow = make(map[string]struct{})
 	}
+	if cfg.syscallField == "" {
+		cfg.syscallField = "evt.type"
+	}
+	if cfg.containerField == "" {
+		cfg.containerField = "container.name"
+	}
+
+	st := &state{
+		allow:            cfg.allow,
+		containerFixed:   cfg.containerFixed,
+		syscallField:     cfg.syscallField,
+		containerField:   cfg.containerField,
+		blockedEvtPrefix: cfg.blockedEvtPrefix,
+		now:              time.Now,
+		seen:             make(map[string]struct{}),
+		hitAllow:         make(map[string]struct{}),
+
+		lines: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "seccomp_exporter_lines_read_total",
+			Help: "NDJSON lines read from stdin",
+		}),
+		parseErr: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "seccomp_exporter_json_parse_errors_total",
+			Help: "Lines that failed JSON decode",
+		}),
+		lastEvent: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "seccomp_exporter_last_event_timestamp_seconds",
+			Help: "Unix time of the last successfully parsed event (0 until the first one); alert on time() minus this to detect a stalled event source",
+		}),
+		seccompObserved: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "seccomp_syscall_observed_total",
+			Help: "Sysdig / audit events counted by extracted syscall or evt.type",
+		}, []string{"syscall", "container"}),
+		seccompBlocked: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "seccomp_syscall_blocked_total",
+			Help: "Events classified as blocked/denied (heuristic; tune -blocked-if-evt-type-prefix for your sysdig version)",
+		}, []string{"syscall", "container"}),
+		seccompUnexpected: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "seccomp_unexpected_syscall_total",
+			Help: "Observed syscalls not present in allowlist (-allowlist-file)",
+		}, []string{"syscall", "container"}),
+		allowlistSize: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "seccomp_profile_allowlist_size",
+			Help: "Number of syscall names in allowlist file",
+		}),
+		observedDistinct: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "seccomp_observed_distinct_syscalls",
+			Help: "Distinct syscall names observed on stdin since process start",
+		}),
+		allowlistedHit: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "seccomp_allowlisted_syscalls_observed",
+			Help: "Count of allowlist entries that have been observed at least once",
+		}),
+		coverage: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "seccomp_profile_coverage_ratio",
+			Help: "allowlisted_syscalls_observed / allowlist_size (0 if allowlist empty)",
+		}),
+	}
+	reg.MustRegister(st.lines, st.parseErr, st.lastEvent, st.seccompObserved, st.seccompBlocked,
+		st.seccompUnexpected, st.allowlistSize, st.observedDistinct, st.allowlistedHit, st.coverage)
+	st.allowlistSize.Set(float64(len(cfg.allow)))
+	return st
 }
 
 type state struct {
@@ -123,14 +159,18 @@ type state struct {
 	containerField   string
 	blockedEvtPrefix string
 
+	now func() time.Time // replaced in tests
+
 	lines             prometheus.Counter
 	parseErr          prometheus.Counter
+	lastEvent         prometheus.Gauge
 	seccompObserved   *prometheus.CounterVec
 	seccompBlocked    *prometheus.CounterVec
 	seccompUnexpected *prometheus.CounterVec
 	observedDistinct  prometheus.Gauge
 	allowlistedHit    prometheus.Gauge
 	coverage          prometheus.Gauge
+	allowlistSize     prometheus.Gauge
 
 	seen     map[string]struct{}
 	hitAllow map[string]struct{}
@@ -143,6 +183,8 @@ func (st *state) handleLine(raw string) {
 		st.parseErr.Inc()
 		return
 	}
+
+	st.lastEvent.Set(float64(st.now().UnixNano()) / 1e9)
 
 	syscallName := strings.TrimSpace(getDotPath(obj, st.syscallField))
 	if syscallName == "" {

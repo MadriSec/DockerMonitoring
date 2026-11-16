@@ -1,0 +1,197 @@
+# Unit tests for dockermonitoring.rules.yml.
+# Run: promtool test rules observability/prometheus/rules/dockermonitoring.rules.test.yml
+
+rule_files:
+  - dockermonitoring.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  # A syscall made only at startup: the series appears at 4 and never changes.
+  # This is the JVM fchdir case, and it must still alert.
+  - name: startup-only unexpected syscall
+    interval: 30s
+    input_series:
+      - series: 'seccomp_unexpected_syscall_total{container="tomcat", syscall="fchdir", instance="exp:9101", job="seccomp"}'
+        values: '4x20'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: UnexpectedSyscallObserved
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              container: tomcat
+              syscall: fchdir
+            exp_annotations:
+              summary: "tomcat called fchdir, which is not on its allowlist"
+              description: "Seen 4 times since the exporter started. With the seccomp profile enforced this call would be denied."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#unexpectedsyscallobserved"
+      - eval_time: 5m
+        alertname: UnexpectedSyscallOngoing
+        exp_alerts: []
+
+  - name: repeated unexpected syscall escalates to critical
+    interval: 30s
+    input_series:
+      - series: 'seccomp_unexpected_syscall_total{container="tomcat", syscall="ptrace", instance="exp:9101", job="seccomp"}'
+        values: '0+30x20'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: UnexpectedSyscallOngoing
+        exp_alerts: []          # still pending: "for: 2m"
+      - eval_time: 5m
+        alertname: UnexpectedSyscallOngoing
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+              container: tomcat
+              syscall: ptrace
+            exp_annotations:
+              summary: "tomcat keeps calling ptrace, which is not on its allowlist"
+              description: "1 calls per second over the last 5 minutes. This is either a gap in the profile on a hot path or behaviour the container should not have."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#unexpectedsyscallongoing"
+
+  - name: healthy exporter raises nothing
+    interval: 30s
+    input_series:
+      - series: 'up{instance="exp:9101", job="seccomp"}'
+        values: '1x20'
+      - series: 'seccomp_profile_allowlist_size{instance="exp:9101", job="seccomp"}'
+        values: '170x20'
+      - series: 'seccomp_profile_coverage_ratio{instance="exp:9101", job="seccomp"}'
+        values: '0.45x20'
+      - series: 'seccomp_exporter_lines_read_total{instance="exp:9101", job="seccomp"}'
+        values: '0+100x20'
+      - series: 'seccomp_exporter_json_parse_errors_total{instance="exp:9101", job="seccomp"}'
+        values: '0x20'
+      # last event always 5 s before "now"
+      - series: 'seccomp_exporter_last_event_timestamp_seconds{instance="exp:9101", job="seccomp"}'
+        values: '-5+30x20'
+    alert_rule_test:
+      - { eval_time: 10m, alertname: MonitoringTargetDown,       exp_alerts: [] }
+      - { eval_time: 10m, alertname: SeccompEventStreamStalled,  exp_alerts: [] }
+      - { eval_time: 10m, alertname: SeccompNoEventsSinceStart,  exp_alerts: [] }
+      - { eval_time: 10m, alertname: SeccompEventParseErrors,    exp_alerts: [] }
+      - { eval_time: 10m, alertname: SeccompAllowlistNotLoaded,  exp_alerts: [] }
+      - { eval_time: 10m, alertname: SeccompProfileMostlyUnused, exp_alerts: [] }
+
+  - name: target down
+    interval: 30s
+    input_series:
+      - series: 'up{instance="exp:9101", job="seccomp"}'
+        values: '1 1 0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: MonitoringTargetDown
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: MonitoringTargetDown
+        exp_alerts:
+          - exp_labels: { severity: critical, instance: "exp:9101", job: seccomp }
+            exp_annotations:
+              summary: "seccomp target exp:9101 is down"
+              description: "Prometheus has not been able to scrape exp:9101 for 1 minute. Nothing from this target is being checked."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#monitoringtargetdown"
+
+  # Events arrive for 2 minutes, then the source goes quiet while the exporter stays up.
+  - name: event stream stalls
+    interval: 30s
+    input_series:
+      - series: 'seccomp_exporter_last_event_timestamp_seconds{instance="exp:9101", job="seccomp"}'
+        values: '0 30 60 90 120x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: SeccompEventStreamStalled
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: SeccompEventStreamStalled
+        exp_alerts:
+          - exp_labels: { severity: warning, instance: "exp:9101", job: seccomp }
+            exp_annotations:
+              summary: "No syscall events on exp:9101 for 4m 0s"
+              description: "The exporter is up but its event source (sysdig) has gone quiet. Syscalls made now are not being checked against the allowlist."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompeventstreamstalled"
+
+  - name: exporter started but never received an event
+    interval: 30s
+    input_series:
+      - series: 'seccomp_exporter_lines_read_total{instance="exp:9101", job="seccomp"}'
+        values: '0x20'
+      - series: 'seccomp_exporter_last_event_timestamp_seconds{instance="exp:9101", job="seccomp"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: SeccompNoEventsSinceStart
+        exp_alerts:
+          - exp_labels: { severity: warning, instance: "exp:9101", job: seccomp }
+            exp_annotations:
+              summary: "exp:9101 has received no events since it started"
+              description: "The exporter has been up for 5 minutes and has not read a single line. The event source was probably never connected."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompnoeventssincestart"
+      # last_event == 0 means "never", not "stalled since 1970"
+      - eval_time: 6m
+        alertname: SeccompEventStreamStalled
+        exp_alerts: []
+
+  - name: five percent of events fail to parse
+    interval: 30s
+    input_series:
+      - series: 'seccomp_exporter_lines_read_total{instance="exp:9101", job="seccomp"}'
+        values: '0+100x30'
+      - series: 'seccomp_exporter_json_parse_errors_total{instance="exp:9101", job="seccomp"}'
+        values: '0+5x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: SeccompEventParseErrors
+        exp_alerts:
+          - exp_labels: { severity: warning, instance: "exp:9101", job: seccomp }
+            exp_annotations:
+              summary: "5% of events on exp:9101 fail to parse"
+              description: "Events that fail to parse are dropped, so the syscalls in them are not checked."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompeventparseerrors"
+
+  - name: allowlist missing
+    interval: 30s
+    input_series:
+      - series: 'seccomp_profile_allowlist_size{instance="exp:9101", job="seccomp"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: SeccompAllowlistNotLoaded
+        exp_alerts:
+          - exp_labels: { severity: critical, instance: "exp:9101", job: seccomp }
+            exp_annotations:
+              summary: "exp:9101 is running without an allowlist"
+              description: "With no allowlist every syscall counts as expected, so UnexpectedSyscall alerts can never fire."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#seccompallowlistnotloaded"
+
+  - name: java agent list states
+    interval: 30s
+    input_series:
+      - series: 'dockermonitoring_listed_native_methods{status="wrapped", instance="empty:9464", job="native"}'
+        values: '0x30'
+      - series: 'dockermonitoring_listed_native_methods{status="wrapped", instance="mismatch:9464", job="native"}'
+        values: '0x30'
+      - series: 'dockermonitoring_listed_native_methods{status="preloaded", instance="mismatch:9464", job="native"}'
+        values: '40x30'
+      - series: 'dockermonitoring_listed_native_methods{status="wrapped", instance="good:9464", job="native"}'
+        values: '195x30'
+      - series: 'dockermonitoring_listed_native_methods{status="preloaded", instance="good:9464", job="native"}'
+        values: '273x30'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: NativeMethodListNotLoaded
+        exp_alerts:
+          - exp_labels: { severity: warning, instance: "empty:9464", job: native }
+            exp_annotations:
+              summary: "The Java agent on empty:9464 has an empty native-method list"
+              description: "The agent is running but wraps nothing, so no native calls are counted."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#nativemethodlistnotloaded"
+      - eval_time: 12m
+        alertname: NativeMethodsNoneWrapped
+        exp_alerts:
+          - exp_labels: { severity: warning, instance: "mismatch:9464", job: native }
+            exp_annotations:
+              summary: "The Java agent on mismatch:9464 has a list but wrapped none of it"
+              description: "Listed natives exist but none is wrapped after 10 minutes. Either the list does not match this application or every listed class loaded before the agent."
+              runbook_url: "https://github.com/MadriSec/DockerMonitoring/blob/main/docs/runbook.md#nativemethodsnonewrapped"
