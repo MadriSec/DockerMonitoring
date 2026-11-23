@@ -386,6 +386,14 @@ looks exactly like a healthy one, so those cases alert too.
   nowhere else. Add a Slack, webhook or email block in
   [`alertmanager.yml`](observability/alertmanager/alertmanager.yml) to send them.
 
+![Prometheus alerts page: the ten rules, with UnexpectedSyscallObserved firing for the Tomcat run](docs/images/prometheus-alerts.png)
+
+![Alertmanager: the same alert, grouped by container, naming the syscall fchdir](docs/images/alertmanager.png)
+
+In the run above, Tomcat made one syscall that is not on its allowlist (`fchdir`, at JVM
+startup), so `UnexpectedSyscallObserved` fires and Alertmanager shows it with the container
+and the syscall name.
+
 ```bash
 # run the rule tests locally
 docker run --rm -v "$PWD/observability:/o:ro" --entrypoint promtool prom/prometheus:v2.52.0 \
